@@ -1,0 +1,2 @@
+# Normalize line endings: stored as LF in the repo, converted to your OS's style on checkout
+* text=auto
