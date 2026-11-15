@@ -10,34 +10,35 @@
 // (similar to `private static final` in Java).
 namespace
 {
-constexpr int kScreenWidth = 1280;
-constexpr int kScreenHeight = 720;
-constexpr int kTargetFps = 60;
+    constexpr int kScreenWidth = 1280;
+    constexpr int kScreenHeight = 720;
+    constexpr int kTargetFps = 60;
 
-// If the game freezes for a moment (e.g. you drag the window), the next frame's
-// delta time can be huge and the player would teleport. Cap it.
-constexpr float kMaxFrameTime = 0.05f;
+    // If the game freezes for a moment (e.g. you drag the window), the next frame's
+    // delta time can be huge and the player would teleport. Cap it.
+    constexpr float kMaxFrameTime = 0.05f;
 
-constexpr float kGridSpacing = 64.0f;
-constexpr Color kBackgroundColor{24, 20, 37, 255};
-constexpr Color kGridColor{44, 38, 64, 255};
+    constexpr float kGridSpacing = 64.0f;
+    constexpr Color kBackgroundColor{ 24, 20, 37, 255 };
+    constexpr Color kGridColor{ 44, 38, 64, 255 };
 
-// Spawning: starts slow and speeds up the longer you survive.
-constexpr float kStartSpawnInterval = 1.0f;   // Seconds between spawns at the start
-constexpr float kMinSpawnInterval = 0.08f;    // Fastest it can get
-constexpr float kSpawnIntervalDecay = 0.006f; // Interval shrinks by this much per second survived
-constexpr std::size_t kMaxEnemies = 600;
-constexpr float kSpawnMargin = 60.0f;         // How far outside the screen edge enemies appear
+    // Spawning: starts slow and speeds up the longer you survive.
+    constexpr float kStartSpawnInterval = 1.0f;   // Seconds between spawns at the start
+    constexpr float kMinSpawnInterval = 0.08f;    // Fastest it can get
+    constexpr float kSpawnIntervalDecay = 0.006f; // Interval shrinks by this much per second survived
+    constexpr std::size_t kMaxEnemies = 600;
+    constexpr float kSpawnMargin = 60.0f;         // How far outside the screen edge enemies appear
 
-constexpr float kEnemyRadius = 12.0f;
-constexpr float kEnemyMinSpeed = 70.0f;
-constexpr float kEnemyMaxSpeed = 110.0f;
+    constexpr float kEnemyRadius = 12.0f;
+    constexpr float kEnemyMinSpeed = 70.0f;
+    constexpr float kEnemyMaxSpeed = 110.0f;
+    constexpr float kEnemyContactDamage = 10.0f;
 }  // namespace
 
 // The `: player_(...)` part is a member initializer list. It constructs members
 // before the constructor body runs.
 Game::Game()
-    : player_(Vector2{0.0f, 0.0f})
+    : player_(Vector2{ 0.0f, 0.0f })
 {
     SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
     InitWindow(kScreenWidth, kScreenHeight, "Neverborn");
@@ -67,6 +68,16 @@ void Game::run()
 
 void Game::update(float dt)
 {
+    if (state_ == GameState::GameOver)
+    {
+        // The world stays frozen until the player restarts.
+        if (IsKeyPressed(KEY_R) || IsKeyPressed(KEY_ENTER))
+        {
+            reset();
+        }
+        return;
+    }
+
     elapsed_ += dt;
 
     player_.update(dt);
@@ -81,11 +92,40 @@ void Game::update(float dt)
         enemy.update(dt, player_.position());
     }
     separateEnemies();
+    checkPlayerHits();
 
     // Keep the player centered on screen. `offset` is where on screen the
     // camera's `target` appears. Recomputed each frame in case the window was resized.
     camera_.target = player_.position();
-    camera_.offset = Vector2{static_cast<float>(GetScreenWidth()) / 2.0f, static_cast<float>(GetScreenHeight()) / 2.0f};
+    camera_.offset = Vector2{ static_cast<float>(GetScreenWidth()) / 2.0f, static_cast<float>(GetScreenHeight()) / 2.0f };
+}
+
+void Game::reset()
+{
+    player_ = Player(Vector2{ 0.0f, 0.0f });
+    enemies_.clear();
+    spawnTimer_ = 0.0f;
+    elapsed_ = 0.0f;
+    state_ = GameState::Playing;
+}
+
+// Circle-vs-circle collision between the player and every enemy.
+// One check per enemy (O(n)) is cheap, unlike enemy-vs-enemy separation.
+void Game::checkPlayerHits()
+{
+    for (const Enemy& enemy : enemies_)
+    {
+        if (CheckCollisionCircles(player_.position(), player_.radius(), enemy.position(), enemy.radius()))
+        {
+            player_.takeDamage(kEnemyContactDamage);
+            break;  // One hit per frame is enough; i-frames block the rest anyway.
+        }
+    }
+
+    if (player_.isDead())
+    {
+        state_ = GameState::GameOver;
+    }
 }
 
 void Game::updateSpawning(float dt)
@@ -109,11 +149,11 @@ void Game::spawnEnemy()
 
     // Half the screen's diagonal = distance from the center (the player) to a corner.
     const float halfDiagonal = 0.5f * std::hypot(static_cast<float>(GetScreenWidth()),
-                                                 static_cast<float>(GetScreenHeight()));
+        static_cast<float>(GetScreenHeight()));
     const float distance = halfDiagonal + kSpawnMargin;
 
     const float angle = angleDist(rng_);
-    const Vector2 offset{std::cos(angle) * distance, std::sin(angle) * distance};
+    const Vector2 offset{ std::cos(angle) * distance, std::sin(angle) * distance };
 
     // emplace_back constructs the Enemy directly inside the vector (no temporary copy).
     enemies_.emplace_back(Vector2Add(player_.position(), offset), speedDist(rng_), kEnemyRadius);
@@ -168,8 +208,33 @@ void Game::draw() const
     EndMode2D();
 
     drawHud();
+    if (state_ == GameState::GameOver)
+    {
+        drawGameOver();
+    }
 
     EndDrawing();
+}
+
+void Game::drawGameOver() const
+{
+    const int screenWidth = GetScreenWidth();
+    const int screenHeight = GetScreenHeight();
+    const int totalSeconds = static_cast<int>(elapsed_);
+
+    // Darken everything behind the text.
+    DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.6f));
+
+    // A small lambda (an inline function, like a Java lambda) to center a line of text.
+    auto drawCentered = [screenWidth](const char* text, int y, int fontSize, Color color) {
+        DrawText(text, (screenWidth - MeasureText(text, fontSize)) / 2, y, fontSize, color);
+        };
+
+    const int centerY = screenHeight / 2;
+    drawCentered("GAME OVER", centerY - 70, 60, Color{ 230, 70, 90, 255 });
+    drawCentered(TextFormat("You survived %02d:%02d", totalSeconds / 60, totalSeconds % 60),
+        centerY + 5, 28, RAYWHITE);
+    drawCentered("Press R to try again", centerY + 50, 22, Color{ 180, 180, 200, 255 });
 }
 
 // Drawn after EndMode2D, so it stays fixed on screen.
@@ -187,9 +252,9 @@ void Game::drawHud() const
 // is called "culling", and it will matter a lot once we have thousands of enemies.
 void Game::drawGroundGrid() const
 {
-    const Vector2 topLeft = GetScreenToWorld2D(Vector2{0.0f, 0.0f}, camera_);
+    const Vector2 topLeft = GetScreenToWorld2D(Vector2{ 0.0f, 0.0f }, camera_);
     const Vector2 bottomRight = GetScreenToWorld2D(
-        Vector2{static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight())},
+        Vector2{ static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight()) },
         camera_);
 
     // Snap the first line to a multiple of the spacing so the grid doesn't slide with the camera.
@@ -198,10 +263,10 @@ void Game::drawGroundGrid() const
 
     for (float x = startX; x <= bottomRight.x; x += kGridSpacing)
     {
-        DrawLineV(Vector2{x, topLeft.y}, Vector2{x, bottomRight.y}, kGridColor);
+        DrawLineV(Vector2{ x, topLeft.y }, Vector2{ x, bottomRight.y }, kGridColor);
     }
     for (float y = startY; y <= bottomRight.y; y += kGridSpacing)
     {
-        DrawLineV(Vector2{topLeft.x, y}, Vector2{bottomRight.x, y}, kGridColor);
+        DrawLineV(Vector2{ topLeft.x, y }, Vector2{ bottomRight.x, y }, kGridColor);
     }
 }

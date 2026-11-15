@@ -8,6 +8,14 @@
 #include "Enemy.h"
 #include "Player.h"
 
+// `enum class` is a type-safe enum: you must write GameState::Playing, and it
+// can't be accidentally compared with plain integers.
+enum class GameState
+{
+    Playing,
+    GameOver,
+};
+
 // Owns the window, the game loop, and everything in the world.
 //
 // Java note: C++ splits a class into a header (.h, the declaration: "what exists")
@@ -31,10 +39,15 @@ private:
     void draw() const;            // Rendering only. `const` = promises not to change the game state.
     void drawGroundGrid() const;
     void drawHud() const;
+    void drawGameOver() const;
 
+    void reset();                 // Starts a fresh run
     void updateSpawning(float dt);
     void spawnEnemy();
     void separateEnemies();
+    void checkPlayerHits();
+
+    GameState state_ = GameState::Playing;
 
     Player player_;               // Stored directly inside Game, not as a pointer
     Camera2D camera_{};           // `{}` zero-initializes every field

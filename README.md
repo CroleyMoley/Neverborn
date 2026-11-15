@@ -10,6 +10,7 @@ Survive endless waves of enemies with auto-firing weapons and level-up upgrades.
 | Key | Action |
 |---|---|
 | WASD / Arrow keys | Move |
+| R / Enter | Restart after game over |
 | Esc | Quit |
 
 ## Building
