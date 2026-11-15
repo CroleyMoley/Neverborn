@@ -7,6 +7,8 @@
 
 #include "Enemy.h"
 #include "Player.h"
+#include "Projectile.h"
+#include "Weapon.h"
 
 // `enum class` is a type-safe enum: you must write GameState::Playing, and it
 // can't be accidentally compared with plain integers.
@@ -46,6 +48,8 @@ private:
     void spawnEnemy();
     void separateEnemies();
     void checkPlayerHits();
+    void handleProjectileHits();
+    void removeDeadEntities();
 
     GameState state_ = GameState::Playing;
 
@@ -55,10 +59,15 @@ private:
     // std::vector is C++'s ArrayList. It stores the Enemy objects themselves
     // (not pointers to them) side by side in memory, which is fast to loop over.
     std::vector<Enemy> enemies_;
+    std::vector<Projectile> projectiles_;
+
+    // A single weapon for now. Later this becomes a list so the player can collect several.
+    Weapon weapon_;
 
     // Random number generator, seeded from the OS. Preferred over the old C rand().
     std::mt19937 rng_{ std::random_device{}() };
 
     float spawnTimer_ = 0.0f;     // Seconds until the next enemy spawns
     float elapsed_ = 0.0f;        // Seconds survived this run
+    int kills_ = 0;
 };

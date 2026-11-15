@@ -33,12 +33,15 @@ namespace
     constexpr float kEnemyMinSpeed = 70.0f;
     constexpr float kEnemyMaxSpeed = 110.0f;
     constexpr float kEnemyContactDamage = 10.0f;
+    constexpr float kEnemyHealth = 20.0f;         // 2 hits from the starting weapon
+    constexpr float kKnockbackDistance = 6.0f;    // How far a hit pushes an enemy back
 }  // namespace
 
 // The `: player_(...)` part is a member initializer list. It constructs members
 // before the constructor body runs.
 Game::Game()
     : player_(Vector2{ 0.0f, 0.0f })
+    , weapon_(WeaponStats{})
 {
     SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
     InitWindow(kScreenWidth, kScreenHeight, "Neverborn");
@@ -92,6 +95,15 @@ void Game::update(float dt)
         enemy.update(dt, player_.position());
     }
     separateEnemies();
+
+    weapon_.update(dt, player_.position(), enemies_, projectiles_);
+    for (Projectile& projectile : projectiles_)
+    {
+        projectile.update(dt);
+    }
+    handleProjectileHits();
+    removeDeadEntities();
+
     checkPlayerHits();
 
     // Keep the player centered on screen. `offset` is where on screen the
@@ -104,9 +116,55 @@ void Game::reset()
 {
     player_ = Player(Vector2{ 0.0f, 0.0f });
     enemies_.clear();
+    projectiles_.clear();
+    weapon_ = Weapon(WeaponStats{});
+    kills_ = 0;
     spawnTimer_ = 0.0f;
     elapsed_ = 0.0f;
     state_ = GameState::Playing;
+}
+
+// Checks every live projectile against every enemy.
+// Like separateEnemies(), this is O(projectiles x enemies). The spatial grid will speed this up too.
+void Game::handleProjectileHits()
+{
+    for (Projectile& projectile : projectiles_)
+    {
+        if (projectile.isExpired())
+        {
+            continue;
+        }
+
+        for (Enemy& enemy : enemies_)
+        {
+            if (enemy.isDead())
+            {
+                continue;
+            }
+
+            if (CheckCollisionCircles(projectile.position(), projectile.radius(),
+                enemy.position(), enemy.radius()))
+            {
+                enemy.takeDamage(projectile.damage());
+                enemy.push(Vector2Scale(projectile.direction(), kKnockbackDistance));
+                projectile.markHit();
+                break;  // Each projectile hits only one enemy
+            }
+        }
+    }
+}
+
+// Deletes dead enemies and used-up projectiles.
+//
+// std::erase_if (C++20) removes every element the lambda returns true for and
+// returns how many were removed. Never remove items from a vector while looping
+// over it with a range-for. That invalidates the loop and crashes.
+void Game::removeDeadEntities()
+{
+    const auto enemiesRemoved = std::erase_if(enemies_, [](const Enemy& enemy) { return enemy.isDead(); });
+    kills_ += static_cast<int>(enemiesRemoved);
+
+    std::erase_if(projectiles_, [](const Projectile& projectile) { return projectile.isExpired(); });
 }
 
 // Circle-vs-circle collision between the player and every enemy.
@@ -156,7 +214,7 @@ void Game::spawnEnemy()
     const Vector2 offset{ std::cos(angle) * distance, std::sin(angle) * distance };
 
     // emplace_back constructs the Enemy directly inside the vector (no temporary copy).
-    enemies_.emplace_back(Vector2Add(player_.position(), offset), speedDist(rng_), kEnemyRadius);
+    enemies_.emplace_back(Vector2Add(player_.position(), offset), speedDist(rng_), kEnemyRadius, kEnemyHealth);
 }
 
 // Pushes overlapping enemies apart so they form a crowd instead of one stacked blob.
@@ -204,6 +262,10 @@ void Game::draw() const
     {
         enemy.draw();
     }
+    for (const Projectile& projectile : projectiles_)
+    {
+        projectile.draw();
+    }
     player_.draw();
     EndMode2D();
 
@@ -232,7 +294,7 @@ void Game::drawGameOver() const
 
     const int centerY = screenHeight / 2;
     drawCentered("GAME OVER", centerY - 70, 60, Color{ 230, 70, 90, 255 });
-    drawCentered(TextFormat("You survived %02d:%02d", totalSeconds / 60, totalSeconds % 60),
+    drawCentered(TextFormat("You survived %02d:%02d  |  %d kills", totalSeconds / 60, totalSeconds % 60, kills_),
         centerY + 5, 28, RAYWHITE);
     drawCentered("Press R to try again", centerY + 50, 22, Color{ 180, 180, 200, 255 });
 }
@@ -245,6 +307,7 @@ void Game::drawHud() const
     DrawFPS(10, 10);
     DrawText(TextFormat("Time: %02d:%02d", totalSeconds / 60, totalSeconds % 60), 10, 36, 20, RAYWHITE);
     DrawText(TextFormat("Enemies: %d", static_cast<int>(enemies_.size())), 10, 60, 20, RAYWHITE);
+    DrawText(TextFormat("Kills: %d", kills_), 10, 84, 20, RAYWHITE);
 }
 
 // Draws an endless grid so you can see the player moving.

@@ -29,7 +29,9 @@ add_executable(${PROJECT_NAME}
     src/Game.cpp
     src/Player.cpp
     src/Enemy.cpp
- "src/Game.cpp" "src/Game.h" "src/Player.cpp" "src/Player.h")
+    src/Projectile.cpp
+    src/Weapon.cpp
+)
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 target_link_libraries(${PROJECT_NAME} PRIVATE raylib)
 
