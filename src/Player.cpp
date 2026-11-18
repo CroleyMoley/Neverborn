@@ -44,7 +44,7 @@ void Player::update(float dt)
     const Vector2 direction = Vector2Normalize(input);
 
     // position += direction * speed * dt
-    position_ = Vector2Add(position_, Vector2Scale(direction, speed_ * dt));
+    position_ = Vector2Add(position_, Vector2Scale(direction, stats_.speed * dt));
 }
 
 bool Player::takeDamage(float amount)
@@ -57,6 +57,11 @@ bool Player::takeDamage(float amount)
     health_ = std::max(0.0f, health_ - amount);
     invulnerableTimer_ = kInvulnerableDuration;
     return true;
+}
+
+void Player::heal(float amount)
+{
+    health_ = std::min(stats_.maxHealth, health_ + amount);
 }
 
 int Player::addExperience(int amount)
@@ -92,7 +97,7 @@ void Player::drawHealthBar() const
 {
     const Vector2 barPosition{ position_.x - kHealthBarWidth / 2.0f,
                               position_.y + radius_ + kHealthBarGap };
-    const float fraction = health_ / maxHealth_;
+    const float fraction = health_ / stats_.maxHealth;
 
     DrawRectangleV(barPosition, Vector2{ kHealthBarWidth, kHealthBarHeight }, kHealthBarBack);
     DrawRectangleV(barPosition, Vector2{ kHealthBarWidth * fraction, kHealthBarHeight }, kHealthBarFill);
