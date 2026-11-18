@@ -35,6 +35,15 @@ namespace
     constexpr float kEnemyContactDamage = 10.0f;
     constexpr float kEnemyHealth = 20.0f;         // 2 hits from the starting weapon
     constexpr float kKnockbackDistance = 6.0f;    // How far a hit pushes an enemy back
+
+    constexpr float kGemRadius = 6.0f;
+    constexpr float kGemPullSpeed = 420.0f;       // How fast gems fly toward the player once in range
+    constexpr Color kGemColor{ 90, 230, 200, 255 };
+
+    constexpr float kExperienceBarHeight = 10.0f;
+    constexpr Color kExperienceBarBack{ 30, 40, 60, 255 };
+    constexpr Color kExperienceBarFill{ 90, 230, 200, 255 };
+    constexpr float kLevelUpBannerDuration = 1.5f;
 }  // namespace
 
 // The `: player_(...)` part is a member initializer list. It constructs members
@@ -103,6 +112,7 @@ void Game::update(float dt)
     }
     handleProjectileHits();
     removeDeadEntities();
+    updateGems(dt);
 
     checkPlayerHits();
 
@@ -117,6 +127,8 @@ void Game::reset()
     player_ = Player(Vector2{ 0.0f, 0.0f });
     enemies_.clear();
     projectiles_.clear();
+    gems_.clear();
+    levelUpBannerTimer_ = 0.0f;
     weapon_ = Weapon(WeaponStats{});
     kills_ = 0;
     spawnTimer_ = 0.0f;
@@ -161,10 +173,52 @@ void Game::handleProjectileHits()
 // over it with a range-for. That invalidates the loop and crashes.
 void Game::removeDeadEntities()
 {
+    // Every dead enemy drops a gem where it died, before it gets removed.
+    for (const Enemy& enemy : enemies_)
+    {
+        if (enemy.isDead())
+        {
+            gems_.push_back(ExperienceGem{ enemy.position() });
+        }
+    }
+
     const auto enemiesRemoved = std::erase_if(enemies_, [](const Enemy& enemy) { return enemy.isDead(); });
     kills_ += static_cast<int>(enemiesRemoved);
 
     std::erase_if(projectiles_, [](const Projectile& projectile) { return projectile.isExpired(); });
+}
+
+// Pulls nearby gems toward the player and collects the ones that reach them.
+void Game::updateGems(float dt)
+{
+    levelUpBannerTimer_ = std::max(0.0f, levelUpBannerTimer_ - dt);
+
+    const Vector2 playerPosition = player_.position();
+    const float pickupRadiusSq = player_.pickupRadius() * player_.pickupRadius();
+
+    int levelsGained = 0;
+    for (ExperienceGem& gem : gems_)
+    {
+        if (Vector2DistanceSqr(gem.position, playerPosition) <= pickupRadiusSq)
+        {
+            const Vector2 toPlayer = Vector2Normalize(Vector2Subtract(playerPosition, gem.position));
+            gem.position = Vector2Add(gem.position, Vector2Scale(toPlayer, kGemPullSpeed * dt));
+        }
+
+        if (CheckCollisionCircles(gem.position, kGemRadius, playerPosition, player_.radius()))
+        {
+            levelsGained += player_.addExperience(gem.value);
+            gem.collected = true;
+        }
+    }
+
+    std::erase_if(gems_, [](const ExperienceGem& gem) { return gem.collected; });
+
+    if (levelsGained > 0)
+    {
+        levelUpBannerTimer_ = kLevelUpBannerDuration;
+        // Next step: pause the game here and let the player pick an upgrade.
+    }
 }
 
 // Circle-vs-circle collision between the player and every enemy.
@@ -258,6 +312,7 @@ void Game::draw() const
     // and the camera converts it to screen pixels.
     BeginMode2D(camera_);
     drawGroundGrid();
+    drawGems();  // Drawn first so enemies walk over them
     for (const Enemy& enemy : enemies_)  // const reference: read-only, no copy
     {
         enemy.draw();
@@ -294,9 +349,19 @@ void Game::drawGameOver() const
 
     const int centerY = screenHeight / 2;
     drawCentered("GAME OVER", centerY - 70, 60, Color{ 230, 70, 90, 255 });
-    drawCentered(TextFormat("You survived %02d:%02d  |  %d kills", totalSeconds / 60, totalSeconds % 60, kills_),
+    drawCentered(TextFormat("You survived %02d:%02d  |  %d kills  |  Level %d",
+        totalSeconds / 60, totalSeconds % 60, kills_, player_.level()),
         centerY + 5, 28, RAYWHITE);
     drawCentered("Press R to try again", centerY + 50, 22, Color{ 180, 180, 200, 255 });
+}
+
+void Game::drawGems() const
+{
+    for (const ExperienceGem& gem : gems_)
+    {
+        // A 4-sided polygon rotated 45 degrees = a diamond.
+        DrawPoly(gem.position, 4, kGemRadius, 45.0f, kGemColor);
+    }
 }
 
 // Drawn after EndMode2D, so it stays fixed on screen.
@@ -304,10 +369,35 @@ void Game::drawHud() const
 {
     const int totalSeconds = static_cast<int>(elapsed_);
 
-    DrawFPS(10, 10);
-    DrawText(TextFormat("Time: %02d:%02d", totalSeconds / 60, totalSeconds % 60), 10, 36, 20, RAYWHITE);
-    DrawText(TextFormat("Enemies: %d", static_cast<int>(enemies_.size())), 10, 60, 20, RAYWHITE);
-    DrawText(TextFormat("Kills: %d", kills_), 10, 84, 20, RAYWHITE);
+    drawExperienceBar();
+
+    DrawFPS(10, 18);
+    DrawText(TextFormat("Time: %02d:%02d", totalSeconds / 60, totalSeconds % 60), 10, 44, 20, RAYWHITE);
+    DrawText(TextFormat("Enemies: %d", static_cast<int>(enemies_.size())), 10, 68, 20, RAYWHITE);
+    DrawText(TextFormat("Kills: %d", kills_), 10, 92, 20, RAYWHITE);
+
+    if (levelUpBannerTimer_ > 0.0f)
+    {
+        const char* text = "LEVEL UP!";
+        const int fontSize = 40;
+        const float alpha = std::min(1.0f, levelUpBannerTimer_);  // Fades out during the last second
+        DrawText(text, (GetScreenWidth() - MeasureText(text, fontSize)) / 2, GetScreenHeight() / 4,
+            fontSize, Fade(kGemColor, alpha));
+    }
+}
+
+// Full-width XP bar along the top of the screen, with the level number on the right.
+void Game::drawExperienceBar() const
+{
+    const float screenWidth = static_cast<float>(GetScreenWidth());
+    const float fraction = static_cast<float>(player_.experience())
+        / static_cast<float>(player_.experienceToNextLevel());
+
+    DrawRectangleV(Vector2{ 0.0f, 0.0f }, Vector2{ screenWidth, kExperienceBarHeight }, kExperienceBarBack);
+    DrawRectangleV(Vector2{ 0.0f, 0.0f }, Vector2{ screenWidth * fraction, kExperienceBarHeight }, kExperienceBarFill);
+
+    const char* levelText = TextFormat("LV %d", player_.level());
+    DrawText(levelText, GetScreenWidth() - MeasureText(levelText, 20) - 10, 18, 20, RAYWHITE);
 }
 
 // Draws an endless grid so you can see the player moving.

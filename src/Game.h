@@ -6,6 +6,7 @@
 #include <raylib.h>
 
 #include "Enemy.h"
+#include "ExperienceGem.h"
 #include "Player.h"
 #include "Projectile.h"
 #include "Weapon.h"
@@ -50,6 +51,9 @@ private:
     void checkPlayerHits();
     void handleProjectileHits();
     void removeDeadEntities();
+    void updateGems(float dt);
+    void drawGems() const;
+    void drawExperienceBar() const;
 
     GameState state_ = GameState::Playing;
 
@@ -60,6 +64,7 @@ private:
     // (not pointers to them) side by side in memory, which is fast to loop over.
     std::vector<Enemy> enemies_;
     std::vector<Projectile> projectiles_;
+    std::vector<ExperienceGem> gems_;
 
     // A single weapon for now. Later this becomes a list so the player can collect several.
     Weapon weapon_;
@@ -70,4 +75,5 @@ private:
     float spawnTimer_ = 0.0f;     // Seconds until the next enemy spawns
     float elapsed_ = 0.0f;        // Seconds survived this run
     int kills_ = 0;
+    float levelUpBannerTimer_ = 0.0f;  // Shows "LEVEL UP!" while > 0
 };

@@ -18,6 +18,9 @@ namespace
     constexpr float kHealthBarGap = 8.0f;          // Space between the player and the bar
     constexpr Color kHealthBarBack{ 60, 20, 30, 255 };
     constexpr Color kHealthBarFill{ 90, 220, 110, 255 };
+
+    // Each level needs this much more XP than the previous one: 5, 10, 15, 20...
+    constexpr int kExperienceIncreasePerLevel = 5;
 }  // namespace
 
 Player::Player(Vector2 startPosition)
@@ -54,6 +57,21 @@ bool Player::takeDamage(float amount)
     health_ = std::max(0.0f, health_ - amount);
     invulnerableTimer_ = kInvulnerableDuration;
     return true;
+}
+
+int Player::addExperience(int amount)
+{
+    experience_ += amount;
+
+    int levelsGained = 0;
+    while (experience_ >= experienceToNextLevel_)
+    {
+        experience_ -= experienceToNextLevel_;  // Leftover XP carries over to the next level
+        ++level_;
+        experienceToNextLevel_ += kExperienceIncreasePerLevel;
+        ++levelsGained;
+    }
+    return levelsGained;
 }
 
 void Player::draw() const
