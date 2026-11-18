@@ -43,7 +43,15 @@ namespace
     constexpr float kExperienceBarHeight = 10.0f;
     constexpr Color kExperienceBarBack{ 30, 40, 60, 255 };
     constexpr Color kExperienceBarFill{ 90, 230, 200, 255 };
-    constexpr float kLevelUpBannerDuration = 1.5f;
+
+    constexpr std::size_t kUpgradeChoices = 3;
+    constexpr float kCardWidth = 280.0f;
+    constexpr float kCardHeight = 150.0f;
+    constexpr float kCardGap = 24.0f;
+    constexpr Color kCardColor{ 38, 32, 58, 255 };
+    constexpr Color kCardBorder{ 90, 80, 130, 255 };
+    constexpr Color kCardHoverBorder{ 90, 230, 200, 255 };
+    constexpr Color kSubtleTextColor{ 180, 180, 200, 255 };
 }  // namespace
 
 // The `: player_(...)` part is a member initializer list. It constructs members
@@ -57,6 +65,7 @@ Game::Game()
     SetTargetFPS(kTargetFps);
 
     camera_.zoom = 1.0f;
+    upgradeLevels_.assign(allUpgrades().size(), 0);
 }
 
 Game::~Game()
@@ -80,14 +89,22 @@ void Game::run()
 
 void Game::update(float dt)
 {
-    if (state_ == GameState::GameOver)
+    switch (state_)
     {
+    case GameState::GameOver:
         // The world stays frozen until the player restarts.
         if (IsKeyPressed(KEY_R) || IsKeyPressed(KEY_ENTER))
         {
             reset();
         }
         return;
+
+    case GameState::LevelUp:
+        updateLevelUp();  // The world is paused while the player chooses
+        return;
+
+    case GameState::Playing:
+        break;  // Continue with the normal update below
     }
 
     elapsed_ += dt;
@@ -116,6 +133,11 @@ void Game::update(float dt)
 
     checkPlayerHits();
 
+    if (state_ == GameState::Playing && pendingLevelUps_ > 0)
+    {
+        beginLevelUp();
+    }
+
     // Keep the player centered on screen. `offset` is where on screen the
     // camera's `target` appears. Recomputed each frame in case the window was resized.
     camera_.target = player_.position();
@@ -128,7 +150,9 @@ void Game::reset()
     enemies_.clear();
     projectiles_.clear();
     gems_.clear();
-    levelUpBannerTimer_ = 0.0f;
+    pendingLevelUps_ = 0;
+    offeredUpgrades_.clear();
+    upgradeLevels_.assign(allUpgrades().size(), 0);
     weapon_ = Weapon(WeaponStats{});
     kills_ = 0;
     spawnTimer_ = 0.0f;
@@ -191,12 +215,9 @@ void Game::removeDeadEntities()
 // Pulls nearby gems toward the player and collects the ones that reach them.
 void Game::updateGems(float dt)
 {
-    levelUpBannerTimer_ = std::max(0.0f, levelUpBannerTimer_ - dt);
-
     const Vector2 playerPosition = player_.position();
     const float pickupRadiusSq = player_.pickupRadius() * player_.pickupRadius();
 
-    int levelsGained = 0;
     for (ExperienceGem& gem : gems_)
     {
         if (Vector2DistanceSqr(gem.position, playerPosition) <= pickupRadiusSq)
@@ -207,17 +228,76 @@ void Game::updateGems(float dt)
 
         if (CheckCollisionCircles(gem.position, kGemRadius, playerPosition, player_.radius()))
         {
-            levelsGained += player_.addExperience(gem.value);
+            pendingLevelUps_ += player_.addExperience(gem.value);
             gem.collected = true;
         }
     }
 
     std::erase_if(gems_, [](const ExperienceGem& gem) { return gem.collected; });
+}
 
-    if (levelsGained > 0)
+// Picks up to 3 random upgrades the player hasn't maxed out yet, then pauses the game.
+void Game::beginLevelUp()
+{
+    const std::vector<Upgrade>& upgrades = allUpgrades();
+
+    std::vector<std::size_t> available;
+    for (std::size_t i = 0; i < upgrades.size(); ++i)
     {
-        levelUpBannerTimer_ = kLevelUpBannerDuration;
-        // Next step: pause the game here and let the player pick an upgrade.
+        if (upgradeLevels_[i] < upgrades[i].maxLevel)
+        {
+            available.push_back(i);
+        }
+    }
+
+    if (available.empty())
+    {
+        pendingLevelUps_ = 0;  // Everything is maxed out. Nothing to offer.
+        return;
+    }
+
+    // Shuffle, then take the first few: a simple way to pick random items without repeats.
+    std::shuffle(available.begin(), available.end(), rng_);
+    const std::size_t count = std::min(kUpgradeChoices, available.size());
+    offeredUpgrades_.assign(available.begin(), available.begin() + static_cast<std::ptrdiff_t>(count));
+
+    state_ = GameState::LevelUp;
+}
+
+void Game::updateLevelUp()
+{
+    const bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    const Vector2 mouse = GetMousePosition();
+
+    for (std::size_t i = 0; i < offeredUpgrades_.size(); ++i)
+    {
+        // KEY_ONE, KEY_TWO and KEY_THREE are consecutive numbers, so KEY_ONE + i works.
+        const bool keyPressed = IsKeyPressed(KEY_ONE + static_cast<int>(i));
+        const bool cardClicked = clicked && CheckCollisionPointRec(mouse, upgradeCardRect(i));
+
+        if (keyPressed || cardClicked)
+        {
+            chooseUpgrade(i);
+            return;
+        }
+    }
+}
+
+void Game::chooseUpgrade(std::size_t offerIndex)
+{
+    const std::size_t upgradeIndex = offeredUpgrades_[offerIndex];
+
+    allUpgrades()[upgradeIndex].apply(player_, weapon_);
+    ++upgradeLevels_[upgradeIndex];
+
+    --pendingLevelUps_;
+    offeredUpgrades_.clear();
+    state_ = GameState::Playing;
+
+    // Leveled up more than once from a single pickup? Offer the next choice right away.
+    if (pendingLevelUps_ > 0)
+    {
+        beginLevelUp();
     }
 }
 
@@ -325,7 +405,11 @@ void Game::draw() const
     EndMode2D();
 
     drawHud();
-    if (state_ == GameState::GameOver)
+    if (state_ == GameState::LevelUp)
+    {
+        drawLevelUp();
+    }
+    else if (state_ == GameState::GameOver)
     {
         drawGameOver();
     }
@@ -352,7 +436,57 @@ void Game::drawGameOver() const
     drawCentered(TextFormat("You survived %02d:%02d  |  %d kills  |  Level %d",
         totalSeconds / 60, totalSeconds % 60, kills_, player_.level()),
         centerY + 5, 28, RAYWHITE);
-    drawCentered("Press R to try again", centerY + 50, 22, Color{ 180, 180, 200, 255 });
+    drawCentered("Press R to try again", centerY + 50, 22, kSubtleTextColor);
+}
+
+// Card positions are calculated in one place, so the drawing and the mouse clicks always agree.
+Rectangle Game::upgradeCardRect(std::size_t offerIndex) const
+{
+    const float count = static_cast<float>(offeredUpgrades_.size());
+    const float totalWidth = count * kCardWidth + (count - 1.0f) * kCardGap;
+    const float startX = (static_cast<float>(GetScreenWidth()) - totalWidth) / 2.0f;
+    const float y = static_cast<float>(GetScreenHeight()) / 2.0f - kCardHeight / 2.0f + 30.0f;
+
+    return Rectangle{ startX + static_cast<float>(offerIndex) * (kCardWidth + kCardGap), y, kCardWidth, kCardHeight };
+}
+
+void Game::drawLevelUp() const
+{
+    const int screenWidth = GetScreenWidth();
+    const int screenHeight = GetScreenHeight();
+    DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.6f));
+
+    auto drawCentered = [screenWidth](const char* text, int y, int fontSize, Color color) {
+        DrawText(text, (screenWidth - MeasureText(text, fontSize)) / 2, y, fontSize, color);
+        };
+
+    const int titleY = screenHeight / 2 - 160;
+    drawCentered("LEVEL UP!", titleY, 48, kGemColor);
+    drawCentered("Choose an upgrade: press 1, 2, 3 or click a card", titleY + 58, 20, kSubtleTextColor);
+
+    const Vector2 mouse = GetMousePosition();
+    const std::vector<Upgrade>& upgrades = allUpgrades();
+
+    for (std::size_t i = 0; i < offeredUpgrades_.size(); ++i)
+    {
+        const std::size_t upgradeIndex = offeredUpgrades_[i];
+        const Upgrade& upgrade = upgrades[upgradeIndex];
+        const Rectangle card = upgradeCardRect(i);
+        const bool hovered = CheckCollisionPointRec(mouse, card);
+
+        DrawRectangleRec(card, kCardColor);
+        DrawRectangleLinesEx(card, hovered ? 3.0f : 2.0f, hovered ? kCardHoverBorder : kCardBorder);
+
+        const int x = static_cast<int>(card.x) + 16;
+        const int y = static_cast<int>(card.y) + 14;
+
+        // .c_str() converts a std::string to the C-style string that raylib functions expect.
+        DrawText(TextFormat("[%d]", static_cast<int>(i) + 1), x, y, 20, kSubtleTextColor);
+        DrawText(upgrade.name.c_str(), x, y + 30, 26, RAYWHITE);
+        DrawText(upgrade.description.c_str(), x, y + 68, 18, kSubtleTextColor);
+        DrawText(TextFormat("Level %d / %d", upgradeLevels_[upgradeIndex] + 1, upgrade.maxLevel),
+            x, y + 102, 18, kGemColor);
+    }
 }
 
 void Game::drawGems() const
@@ -375,15 +509,6 @@ void Game::drawHud() const
     DrawText(TextFormat("Time: %02d:%02d", totalSeconds / 60, totalSeconds % 60), 10, 44, 20, RAYWHITE);
     DrawText(TextFormat("Enemies: %d", static_cast<int>(enemies_.size())), 10, 68, 20, RAYWHITE);
     DrawText(TextFormat("Kills: %d", kills_), 10, 92, 20, RAYWHITE);
-
-    if (levelUpBannerTimer_ > 0.0f)
-    {
-        const char* text = "LEVEL UP!";
-        const int fontSize = 40;
-        const float alpha = std::min(1.0f, levelUpBannerTimer_);  // Fades out during the last second
-        DrawText(text, (GetScreenWidth() - MeasureText(text, fontSize)) / 2, GetScreenHeight() / 4,
-            fontSize, Fade(kGemColor, alpha));
-    }
 }
 
 // Full-width XP bar along the top of the screen, with the level number on the right.

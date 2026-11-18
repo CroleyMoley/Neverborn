@@ -31,7 +31,8 @@ add_executable(${PROJECT_NAME}
     src/Enemy.cpp
     src/Projectile.cpp
     src/Weapon.cpp
- "src/ExperienceGem.h")
+    src/Upgrade.cpp
+)
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 target_link_libraries(${PROJECT_NAME} PRIVATE raylib)
 

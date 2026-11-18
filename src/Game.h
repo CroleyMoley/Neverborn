@@ -9,6 +9,7 @@
 #include "ExperienceGem.h"
 #include "Player.h"
 #include "Projectile.h"
+#include "Upgrade.h"
 #include "Weapon.h"
 
 // `enum class` is a type-safe enum: you must write GameState::Playing, and it
@@ -16,6 +17,7 @@
 enum class GameState
 {
     Playing,
+    LevelUp,   // Paused, choosing an upgrade
     GameOver,
 };
 
@@ -43,6 +45,7 @@ private:
     void drawGroundGrid() const;
     void drawHud() const;
     void drawGameOver() const;
+    void drawLevelUp() const;
 
     void reset();                 // Starts a fresh run
     void updateSpawning(float dt);
@@ -54,6 +57,11 @@ private:
     void updateGems(float dt);
     void drawGems() const;
     void drawExperienceBar() const;
+
+    void beginLevelUp();                           // Picks random upgrades and pauses the game
+    void updateLevelUp();                          // Waits for the player to choose
+    void chooseUpgrade(std::size_t offerIndex);
+    Rectangle upgradeCardRect(std::size_t offerIndex) const;  // Shared by drawing and mouse clicks
 
     GameState state_ = GameState::Playing;
 
@@ -75,5 +83,8 @@ private:
     float spawnTimer_ = 0.0f;     // Seconds until the next enemy spawns
     float elapsed_ = 0.0f;        // Seconds survived this run
     int kills_ = 0;
-    float levelUpBannerTimer_ = 0.0f;  // Shows "LEVEL UP!" while > 0
+
+    int pendingLevelUps_ = 0;                  // Level-ups still waiting for an upgrade choice
+    std::vector<int> upgradeLevels_;           // How many times each upgrade has been taken
+    std::vector<std::size_t> offeredUpgrades_; // Indices into allUpgrades() shown on the cards
 };
